@@ -128,7 +128,7 @@ function! targets#e(modifier)
         let i = i + 1
     endwhile
 
-    if s:getDelimiters(delimiter)[3]
+    if empty(s:getFactories(delimiter))
         return a:modifier . chars
     endif
 
@@ -201,63 +201,44 @@ function! s:cleanUp()
 endfunction
 
 function! s:findTarget(context, delimiter, which, modifier, count)
-    let [kind, s:opening, s:closing, err] = s:getDelimiters(a:delimiter)
-    if err
+    let factories = s:getFactories(a:delimiter)
+    if empty(factories)
         let errorTarget = targets#target#withError("failed to find delimiter")
         return [errorTarget, errorTarget]
     endif
 
+    " TODO: inject from factory into target, pick name kind or name
+    let kind = factories[0].kind
+
     let view = winsaveview()
-    let rawTarget = s:findRawTarget(a:context, kind, a:which, a:count)
+    let rawTarget = s:findRawTarget(a:context, factories, a:which, a:count)
     let target = s:modifyTarget(rawTarget, kind, a:modifier)
     call winrestview(view)
     return [target, rawTarget]
 endfunction
 
-function! s:findRawTarget(context, kind, which, count)
+function! s:findRawTarget(context, factories, which, count)
     " TODO: inject into this function? or add to context?
     let oldpos = getpos('.')
 
-    if a:kind ==# 't'
-        let args = {'opening': '<\a', 'closing': '</\a\zs', 'trigger': 't'}
-        let f = s:newFactory('P', oldpos, args)
-
-    elseif a:kind ==# 'p'
-        let args = {'opening': s:opening, 'closing': s:closing, 'trigger': s:closing}
-        let f = s:newFactory('P', oldpos, args)
-
-    elseif a:kind ==# 'q'
-        let args = {'delimiter': s:opening}
-        let f = s:newFactory('Q', oldpos, args)
-
-    elseif a:kind ==# 's'
-        let args = {'delimiter': s:opening}
-        let f = s:newFactory('S', oldpos, args)
-
-    elseif a:kind ==# 'a'
-        let args = {'delimiter': s:opening}
-        let f = s:newFactory('A', oldpos, args)
-
-    else
-        return targets#target#withError('findRawTarget kind')
-    endif
+    let f = a:factories[0] " only use first factory for now
 
     let min = line('w0') " TODO: add these to context
     let max = line('w$')
     let gen = s:newMultiGen(oldpos, min, max)
 
     if a:which ==# 'c'
-        call gen.add(f.new('C'))
+        call gen.add(f.new(oldpos, 'C'))
 
         if a:count == 1 && s:newSelection " seek
-            call gen.add(f.new('N'), f.new('L'))
+            call gen.add(f.new(oldpos, 'N'), f.new(oldpos, 'L'))
         endif
 
     elseif a:which ==# 'n'
-        call gen.add(f.new('N'))
+        call gen.add(f.new(oldpos, 'N'))
 
     elseif a:which ==# 'l'
-        call gen.add(f.new('L'))
+        call gen.add(f.new(oldpos, 'L'))
 
     else
         return targets#target#withError('findRawTarget which')
@@ -341,44 +322,48 @@ function! s:modifyTarget(target, kind, modifier)
     return targets#target#withError('modifyTarget kind')
 endfunction
 
-function! s:getDelimiters(trigger)
+" returns list of [kind, argsForKind], potentially empty
+function! s:getFactories(trigger)
     " create cache
-    if !exists('s:delimiterCache')
-        let s:delimiterCache = {}
+    if !exists('s:factoriesCache')
+        let s:factoriesCache = {}
     endif
 
     " check cache
-    if has_key(s:delimiterCache, a:trigger)
-        let [kind, opening, closing] = s:delimiterCache[a:trigger]
-        return [kind, opening, closing, 0]
+    if has_key(s:factoriesCache, a:trigger)
+        let factories = s:factoriesCache[a:trigger]
+        return factories
     endif
 
-    let [kind, rawOpening, rawClosing, err] = s:getRawDelimiters(a:trigger)
-    if err > 0
-        return [0, 0, 0, err]
-    endif
-
-    let opening = s:modifyDelimiter(kind, rawOpening)
-    let closing = s:modifyDelimiter(kind, rawClosing)
-
-    " write to cache
-    let s:delimiterCache[a:trigger] = [kind, opening, closing]
-
-    return [kind, opening, closing, 0]
+    let factories = s:getNewFactories(a:trigger)
+    " write to cache (even if no factories were returned)
+    let s:factoriesCache[a:trigger] = factories
+    return factories
 endfunction
 
-function! s:getRawDelimiters(trigger)
+" returns list of [kind, argsForKind], potentially empty
+" TODO: execute modifyDelimiter in newFactory on each arg automatically maybe?
+" or maybe in a generator specific function?
+function! s:getNewFactories(trigger)
     " check more specific ones first for #145
     if a:trigger ==# g:targets_tagTrigger " TODO: does this work with custom trigger?
-        return ['t', 't', 0, 0]
-    elseif a:trigger ==# g:targets_argTrigger " TODO: does this work with custom trigger?
-        return ['a', 0, 0, 0]
+        let args = {'opening': '<\a', 'closing': '</\a\zs', 'trigger': 't'}
+        return [s:newFactory('t', 'P', args)]
+    endif
+
+    if a:trigger ==# g:targets_argTrigger " TODO: does this work with custom trigger?
+        return [s:newFactory('a', 'A', {})]
     endif
 
     for pair in split(g:targets_pairs)
         for trigger in split(pair, '\zs')
             if trigger ==# a:trigger
-                return ['p', pair[0], pair[1], 0]
+                let args = {
+                            \ 'opening': s:modifyDelimiter('p', pair[0]),
+                            \ 'closing': s:modifyDelimiter('p', pair[1]),
+                            \ 'trigger': s:modifyDelimiter('p', pair[1])
+                            \ }
+                return [s:newFactory('p', 'P', args)]
             endif
         endfor
     endfor
@@ -386,7 +371,8 @@ function! s:getRawDelimiters(trigger)
     for quote in split(g:targets_quotes)
         for trigger in split(quote, '\zs')
             if trigger ==# a:trigger
-                return ['q', quote[0], quote[0], 0]
+                let args = {'delimiter': s:modifyDelimiter('q', quote[0])}
+                return [s:newFactory('q', 'Q', args)]
             endif
         endfor
     endfor
@@ -394,12 +380,13 @@ function! s:getRawDelimiters(trigger)
     for separator in split(g:targets_separators)
         for trigger in split(separator, '\zs')
             if trigger ==# a:trigger
-                return ['s', separator[0], separator[0], 0]
+                let args = {'delimiter': s:modifyDelimiter('s', separator[0])}
+                return [s:newFactory('s', 'S', args)]
             endif
         endfor
     endfor
 
-    return [0, 0, 0, 1]
+    return []
 endfunction
 
 function! s:modifyDelimiter(kind, delimiter)
@@ -1037,21 +1024,24 @@ endfunction
 
 " returns a factory to create generators
 " TODO: inject context instead of oldpos?
-function! s:newFactory(name, oldpos, args)
+" TODO: remove kind later when we have modifyTarget functions per factory
+function! s:newFactory(kind, name, args)
     return {
-        \ 'oldpos': a:oldpos,
-        \ 'args': a:args,
+        \ 'kind': a:kind,
         \ 'name': a:name,
+        \ 'args': a:args,
         \
         \ 'new': function('s:factoryNew'),
         \ }
 endfunction
 
 " returns a target generator
-function! s:factoryNew(which) dict
+function! s:factoryNew(oldpos, which) dict
     return {
-        \ 'oldpos': self.oldpos,
+        \ 'kind':   self.kind,
+        \ 'name':   self.name . a:which,
         \ 'args':   self.args,
+        \ 'oldpos': a:oldpos,
         \
         \ 'next':   function('s:genNext' . self.name . a:which),
         \ 'nextN':  function('s:genNextN'),
@@ -1411,9 +1401,7 @@ function! s:newMultiGen(oldpos, min, max)
 endfunction
 
 function! s:multiGenAdd(...) dict
-    for gen in a:000
-        call add(self.gens, gen)
-    endfor
+    call extend(self.gens, a:000)
 endfunction
 
 function! s:multiGenNext() dict
