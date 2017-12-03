@@ -342,28 +342,20 @@ function! s:getFactories(trigger)
 endfunction
 
 " returns list of [kind, argsForKind], potentially empty
-" TODO: execute modifyDelimiter in newFactory on each arg automatically maybe?
-" or maybe in a generator specific function?
 function! s:getNewFactories(trigger)
     " check more specific ones first for #145
     if a:trigger ==# g:targets_tagTrigger " TODO: does this work with custom trigger?
-        let args = {'opening': '<\a', 'closing': '</\a\zs', 'trigger': 't'}
-        return [s:newFactory('t', 'P', args)]
+        return [s:newFactoryT()]
     endif
 
     if a:trigger ==# g:targets_argTrigger " TODO: does this work with custom trigger?
-        return [s:newFactory('a', 'A', {})]
+        return [s:newFactoryA()]
     endif
 
     for pair in split(g:targets_pairs)
         for trigger in split(pair, '\zs')
             if trigger ==# a:trigger
-                let args = {
-                            \ 'opening': s:modifyDelimiter('p', pair[0]),
-                            \ 'closing': s:modifyDelimiter('p', pair[1]),
-                            \ 'trigger': s:modifyDelimiter('p', pair[1])
-                            \ }
-                return [s:newFactory('p', 'P', args)]
+                return [s:newFactoryP(pair[0], pair[1])]
             endif
         endfor
     endfor
@@ -371,8 +363,7 @@ function! s:getNewFactories(trigger)
     for quote in split(g:targets_quotes)
         for trigger in split(quote, '\zs')
             if trigger ==# a:trigger
-                let args = {'delimiter': s:modifyDelimiter('q', quote[0])}
-                return [s:newFactory('q', 'Q', args)]
+                return [s:newFactoryQ(quote[0])]
             endif
         endfor
     endfor
@@ -380,8 +371,7 @@ function! s:getNewFactories(trigger)
     for separator in split(g:targets_separators)
         for trigger in split(separator, '\zs')
             if trigger ==# a:trigger
-                let args = {'delimiter': s:modifyDelimiter('s', separator[0])}
-                return [s:newFactory('s', 'S', args)]
+                return [s:newFactoryS(separator[0])]
             endif
         endfor
     endfor
@@ -1069,6 +1059,27 @@ endfunction
 
 " pairs
 
+function! s:newFactoryP(opening, closing)
+    let args = {
+                \ 'opening': s:modifyDelimiter('p', a:opening),
+                \ 'closing': s:modifyDelimiter('p', a:closing),
+                \ 'trigger': s:modifyDelimiter('p', a:closing)
+                \ }
+    return s:newFactory('p', 'P', args)
+endfunction
+
+" tag factory uses pair functions as well for now
+" special args must not be modified/escaped
+function! s:newFactoryT()
+    let args = {
+                \ 'opening': '<\a',
+                \ 'closing': '</\a\zs',
+                \ 'trigger': 't'
+                \ }
+    return s:newFactory('t', 'P', args)
+endfunction
+
+
 function! s:genNextPC() dict
     if exists('self.currentTarget') && self.currentTarget.state().isInvalid()
         return self.currentTarget
@@ -1129,6 +1140,11 @@ function! s:genNextPL() dict
 endfunction
 
 " quotes
+
+function! s:newFactoryQ(delimiter)
+    let args = {'delimiter': s:modifyDelimiter('q', a:delimiter)}
+    return s:newFactory('q', 'Q', args)
+endfunction
 
 function! s:genNextQC() dict
     if exists('self.currentTarget') && self.currentTarget.state().isInvalid()
@@ -1213,6 +1229,11 @@ endfunction
 
 " separators
 
+function! s:newFactoryS(delimiter)
+    let args = {'delimiter': s:modifyDelimiter('s', a:delimiter)}
+    return s:newFactory('s', 'S', args)
+endfunction
+
 function! s:genNextSC() dict
     if exists('self.currentTarget') && self.currentTarget.state().isInvalid()
         return self.currentTarget
@@ -1275,6 +1296,10 @@ function! s:genNextSL() dict
 endfunction
 
 " arguments
+
+function! s:newFactoryA()
+    return s:newFactory('a', 'A', {})
+endfunction
 
 function! s:genNextAC() dict
     if exists('self.currentTarget') && self.currentTarget.state().isInvalid()
