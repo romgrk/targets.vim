@@ -228,23 +228,42 @@ endfunction
 
 function! s:findRawTarget(context, factories, which, count)
     " TODO: inject into this function? or add to context?
-    let oldpos = getpos('.')
 
     let min = line('w0') " TODO: add these to context
     let max = line('w$')
-    let gen = s:newMultiGen(oldpos, min, max)
 
+    " TODO: clean these up (also don't inject oldpos again)
+    " use target.gen.oldpos for scoring instead of a global one?
+    " in that case inject different oldpos for C, N, L gens
     if a:which ==# 'c'
-        call gen.add(a:factories, oldpos, 'C')
-
         if a:count == 1 && s:newSelection " seek
-            call gen.add(a:factories, oldpos, 'N', 'L')
+            let oldpos = getpos('.') " actually use cursor pos
+            let gen = s:newMultiGen(oldpos, min, max)
+            call gen.add(a:factories, oldpos, 'C', 'N', 'L')
+
+        else " don't seek
+            if !s:newSelection
+                call s:lastRawTarget.cursorE() " start from last raw end
+            endif
+            let oldpos = getpos('.')
+            let gen = s:newMultiGen(oldpos, min, max)
+            call gen.add(a:factories, oldpos, 'C')
         endif
 
     elseif a:which ==# 'n'
+        if !s:newSelection
+            call s:lastRawTarget.cursorS() " start from last raw start
+        endif
+        let oldpos = getpos('.')
+        let gen = s:newMultiGen(oldpos, min, max)
         call gen.add(a:factories, oldpos, 'N')
 
     elseif a:which ==# 'l'
+        if !s:newSelection
+            call s:lastRawTarget.cursorE() " start from last raw end
+        endif
+        let oldpos = getpos('.')
+        let gen = s:newMultiGen(oldpos, min, max)
         call gen.add(a:factories, oldpos, 'L')
 
     else
@@ -1107,30 +1126,28 @@ function! s:newFactoryT()
     return s:newFactory('t', 'P', args)
 endfunction
 
-
 function! s:genNextPC() dict
     if !exists('self.currentTarget') " first invocation
         if s:newSelection
-            call setpos('.', self.oldpos)
             let cnt = 1
         else
-            call s:lastRawTarget.cursorE()
-            let cnt = 2
+            let cnt = 2 " this doesn't really work in cases like [ ( [ x ] ) ]
         endif
-    elseif self.currentTarget.state().isInvalid()
-        return self.currentTarget
-    else
-        call setpos('.', self.oldpos)
+    elseif self.currentTarget.state().isValid()
         let cnt = 2
+    else
+        return self.currentTarget
     endif
 
+    call setpos('.', self.oldpos)
     let self.currentTarget = s:selectp(cnt, self.args.trigger, self)
     let self.oldpos = getpos('.')
     return self.currentTarget
 endfunction
 
 function! s:genNextPN() dict
-    if exists('self.currentTarget') && self.currentTarget.state().isInvalid()
+    if !exists('self.currentTarget') " first invocation
+    elseif self.currentTarget.state().isInvalid()
         return self.currentTarget
     endif
 
@@ -1192,12 +1209,12 @@ function! s:genNextQN() dict
         let [self.dir, self.rate, self.skipL, self.skipR, self.error] = s:quoteDir(self.args.delimiter)
         let cnt = self.rate - self.skipR " skip initially once
         " echom 'skip'
-    elseif self.currentTarget.state().isInvalid()
-        return self.currentTarget
-    else
+    elseif self.currentTarget.state().isValid()
         call setpos('.', self.oldpos)
         let cnt = self.rate " then go by rate
         " echom 'no skip'
+    else
+        return self.currentTarget
     endif
 
     if s:search(cnt, self.args.delimiter, 'W') > 0
@@ -1220,12 +1237,12 @@ function! s:genNextQL() dict
         let [self.dir, self.rate, self.skipL, self.skipR, self.error] = s:quoteDir(self.args.delimiter)
         let cnt = self.rate - self.skipL " skip initially once
         " echom 'skip'
-    elseif self.currentTarget.state().isInvalid()
-        return self.currentTarget
-    else
+    elseif self.currentTarget.state().isValid()
         call setpos('.', self.oldpos)
         let cnt = self.rate " then go by rate
         " echom 'no skip'
+    else
+        return self.currentTarget
     endif
 
     if s:search(cnt, self.args.delimiter, 'bW') > 0
@@ -1279,11 +1296,10 @@ endfunction
 function! s:genNextSL() dict
     if !exists('self.currentTarget') " first invocation
         let flags = 'cbW' " allow separator under cursor on first iteration
-    else
+    elseif self.currentTarget.state().isValid()
         let flags = 'bW'
-        if self.currentTarget.state().isInvalid()
-            return self.currentTarget
-        endif
+    else
+        return self.currentTarget
     endif
 
     call setpos('.', self.oldpos)
@@ -1313,15 +1329,12 @@ function! s:genNextAC() dict
             call self.currentTarget.cursorE() " keep going from right end
             let self.oldpos = getpos('.')
             return self.currentTarget
-        else
-            " continue from previous state
-            call s:lastRawTarget.cursorE()
         endif
     elseif self.currentTarget.state().isInvalid()
         return self.currentTarget
-    else
-        call setpos('.', self.oldpos)
     endif
+
+    call setpos('.', self.oldpos)
 
     let [opening, closing] = [s:argOpening, s:argClosing]
     if s:findArgBoundary('cW', 'cW', opening, closing, s:argOuter, s:none, 1)[2] > 0
@@ -1336,12 +1349,7 @@ function! s:genNextAC() dict
 endfunction
 
 function! s:genNextAN() dict
-    if !exists('self.currentTarget') " first invocation
-        if !s:newSelection
-            call s:lastRawTarget.cursorS()
-            let self.oldpos = getpos('.')
-        endif
-    elseif self.currentTarget.state().isInvalid()
+    if exists('self.currentTarget') && self.currentTarget.state().isInvalid()
         return self.currentTarget
     endif
 
@@ -1371,12 +1379,7 @@ function! s:genNextAN() dict
 endfunction
 
 function! s:genNextAL() dict
-    if !exists('self.currentTarget') " first invocation
-        if !s:newSelection
-            call s:lastRawTarget.cursorE()
-            let self.oldpos = getpos('.')
-        endif
-    elseif self.currentTarget.state().isInvalid()
+    if exists('self.currentTarget') && self.currentTarget.state().isInvalid()
         return self.currentTarget
     endif
 
@@ -1433,10 +1436,10 @@ function! s:multiGenNext() dict
         for gen in self.gens
             call gen.next()
         endfor
-    elseif self.currentTarget.state().isInvalid() " already found invalid
-        return self.currentTarget
-    else
+    elseif self.currentTarget.state().isValid()
         call self.currentTarget.gen.next() " fill up where we used the last target from
+    else
+        return self.currentTarget
     endif
 
     let targets = []
