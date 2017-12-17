@@ -551,25 +551,6 @@ endfunction
 " match selectors
 " ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
 
-" select pair of delimiters around cursor (multi line, no seeking)
-" select to the right if cursor is on a delimiter
-" cursor  │   ....
-" line    │ ' ' b ' '
-" matcher │   └───┘
-function! s:select(opening, closing, direction, gen)
-    if a:direction ==# ''
-        return targets#target#withError('select without direction')
-    elseif a:direction ==# '>'
-        let [sl, sc] = searchpos(a:opening, 'bcW') " search left for opening
-        let [el, ec] = searchpos(a:closing, 'W')   " then right for closing
-        return targets#target#fromValues(sl, sc, el, ec, a:gen)
-    else
-        let [el, ec] = searchpos(a:closing, 'cW') " search right for closing
-        let [sl, sc] = searchpos(a:opening, 'bW') " then left for opening
-        return targets#target#fromValues(sl, sc, el, ec, a:gen)
-    endif
-endfunction
-
 " select a pair around the cursor
 " args (count, trigger)
 function! s:selectp(count, trigger, gen)
@@ -973,7 +954,7 @@ function! s:genNextQC(first) dict
     endif
 
     let dir = s:quoteDir(self.args.delimiter)[0]
-    let self.currentTarget = s:select(self.args.delimiter, self.args.delimiter, dir, self)
+    let self.currentTarget = targets#util#select(self.args.delimiter, self.args.delimiter, dir, self)
     return self.currentTarget
 endfunction
 
@@ -994,7 +975,7 @@ function! s:genNextQN(first) dict
         return targets#target#withError('QN')
     endif
 
-    let target = s:select(self.args.delimiter, self.args.delimiter, '>', self)
+    let target = targets#util#select(self.args.delimiter, self.args.delimiter, '>', self)
     call target.cursorS() " keep going from left end TODO: is this call needed?
     return target
 endfunction
@@ -1013,7 +994,7 @@ function! s:genNextQL(first) dict
         return targets#target#withError('QL')
     endif
 
-    let target = s:select(self.args.delimiter, self.args.delimiter, '<', self)
+    let target = targets#util#select(self.args.delimiter, self.args.delimiter, '<', self)
     call target.cursorE() " keep going from right end TODO: is this call needed?
     return target
 endfunction
@@ -1041,7 +1022,7 @@ function! s:genNextSC(first) dict
         return targets#target#withError('only one current separator')
     endif
 
-    return s:select(self.args.delimiter, self.args.delimiter, '>', self)
+    return targets#util#select(self.args.delimiter, self.args.delimiter, '>', self)
 endfunction
 
 function! s:genNextSN(first) dict
@@ -1050,7 +1031,7 @@ function! s:genNextSN(first) dict
     endif
 
     let oldpos = getpos('.')
-    let target = s:select(self.args.delimiter, self.args.delimiter, '>', self)
+    let target = targets#util#select(self.args.delimiter, self.args.delimiter, '>', self)
     call setpos('.', oldpos)
     return target
 endfunction
@@ -1067,7 +1048,7 @@ function! s:genNextSL(first) dict
     endif
 
     let oldpos = getpos('.')
-    let target = s:select(self.args.delimiter, self.args.delimiter, '<', self)
+    let target = targets#util#select(self.args.delimiter, self.args.delimiter, '<', self)
     call setpos('.', oldpos)
     return target
 endfunction
